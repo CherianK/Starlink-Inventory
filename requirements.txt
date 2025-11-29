@@ -1,0 +1,10 @@
+streamlit==1.51.0
+pandas==2.3.3
+numpy==2.3.4
+scipy==1.16.3
+openpyxl==3.1.5
+plotly==6.3.1
+pyarrow==21.0.0
+xlsxwriter==3.2.9
+altair==5.5.0
+pydeck==0.9.1
