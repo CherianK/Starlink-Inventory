@@ -249,6 +249,7 @@ def compute_excess_inventory(
     wanted_cols = [
         "SKU",
         "Bucket",
+        "ABCXYZ",
         "ROP_or_OrderUpTo",
         "Category",
         "SubCategory",
@@ -748,6 +749,45 @@ rename_map = {
 po_friendly = po_view.rename(columns=rename_map)
 
 # ----------------------------
+# Small helper for "select all / clear" multiselects
+# ----------------------------
+def multiselect_with_select_all(label, options, session_key_prefix):
+    """
+    Multiselect that remembers choices in session_state and
+    provides 'Select all' / 'Clear' buttons.
+    """
+    if "options" not in st.session_state.get(session_key_prefix, {}):
+        st.session_state[session_key_prefix] = {
+            "options": options,
+            "selected": list(options),
+        }
+    else:
+        # Drop any values that no longer exist
+        current = st.session_state[session_key_prefix]
+        current["options"] = options
+        current["selected"] = [v for v in current["selected"] if v in options]
+
+    state = st.session_state[session_key_prefix]
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        if st.button("Select all", key=f"{session_key_prefix}_all"):
+            state["selected"] = list(options)
+    with c2:
+        if st.button("Clear", key=f"{session_key_prefix}_none"):
+            state["selected"] = []
+
+    selected = st.multiselect(
+        label,
+        options=options,
+        default=state["selected"],
+        key=f"{session_key_prefix}_ms",
+    )
+    # Keep state in sync
+    state["selected"] = selected
+    return selected
+
+# ----------------------------
 # Tabs
 # ----------------------------
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
@@ -840,71 +880,77 @@ with tab5:
         # Filter to selected month
         sel = savings_detail[savings_detail["MonthLabel"] == sel_month].copy()
 
-        # --- Filters: Bucket checklist + multiselects for Category/Subcategory/Brand ---
+                # --- Filters: Bucket / Category / Subcategory / Brand ---
         with st.expander("Filters (Bucket, Category, Subcategory, Brand)", expanded=True):
-            st.caption("Uncheck buckets to exclude them. Leave a multiselect empty to show all values.")
+            st.caption("Use the checklists below. 'Select all' / 'Clear' are available for each filter.")
 
-            # Ensure the columns exist (in case of partial data)
+            # Ensure columns exist to avoid key errors
             for col_name in ["Bucket", "Category", "SubCategory", "Brand"]:
                 if col_name not in sel.columns:
                     sel[col_name] = ""
 
-            # 1) Bucket checklist (using the canonical order)
-            present_buckets = [b for b in BUCKETS_ORDER if b in sel["Bucket"].unique()]
-            if not present_buckets:
+            # Base options (from the *month* snapshot)
+            bucket_options = [b for b in BUCKETS_ORDER if b in sel["Bucket"].unique()]
+            cat_options    = sorted(sel["Category"].dropna().unique())
+            subcat_options = sorted(sel["SubCategory"].dropna().unique())
+            brand_options  = sorted(sel["Brand"].dropna().unique())
+
+            # If no buckets at all, we’re done
+            if not bucket_options:
                 st.warning("No buckets found in this month’s snapshot.")
                 sel = sel.iloc[0:0]
             else:
-                bucket_cols = st.columns(len(present_buckets))
-                active_buckets = []
-                for col, b in zip(bucket_cols, present_buckets):
-                    with col:
-                        checked = st.checkbox(
-                            b,
-                            value=True,
-                            key=f"sav_bucket_{b}",
-                        )
-                    if checked:
-                        active_buckets.append(b)
-
-                # If at least one bucket is checked, filter; otherwise show nothing
-                if active_buckets:
-                    sel = sel[sel["Bucket"].isin(active_buckets)]
+                # 1) Bucket checklist via multiselect_with_select_all
+                bucket_selected = multiselect_with_select_all(
+                    "Buckets",
+                    options=bucket_options,
+                    session_key_prefix="sav_buckets",
+                )
+                if bucket_selected:
+                    sel = sel[sel["Bucket"].isin(bucket_selected)]
                 else:
                     sel = sel.iloc[0:0]
 
-            # 2) Category multiselect
-            cat_options = sorted(sel["Category"].dropna().unique())
-            cat_selected = st.multiselect(
-                "Category",
-                options=cat_options,
-                default=[],
-                key="sav_cat",
-            )
-            if cat_selected:
-                sel = sel[sel["Category"].isin(cat_selected)]
+            # 2) Category checklist
+            if not sel.empty and cat_options:
+                cat_selected = multiselect_with_select_all(
+                    "Category",
+                    options=cat_options,
+                    session_key_prefix="sav_category",
+                )
+                if cat_selected:
+                    sel = sel[sel["Category"].isin(cat_selected)]
 
-            # 3) Subcategory multiselect
-            subcat_options = sorted(sel["SubCategory"].dropna().unique())
-            subcat_selected = st.multiselect(
-                "Subcategory",
-                options=subcat_options,
-                default=[],
-                key="sav_subcat",
-            )
-            if subcat_selected:
-                sel = sel[sel["SubCategory"].isin(subcat_selected)]
+            # 3) Subcategory checklist
+            if not sel.empty and subcat_options:
+                subcat_selected = multiselect_with_select_all(
+                    "Subcategory",
+                    options=subcat_options,
+                    session_key_prefix="sav_subcategory",
+                )
+                if subcat_selected:
+                    sel = sel[sel["SubCategory"].isin(subcat_selected)]
 
-            # 4) Brand multiselect
-            brand_options = sorted(sel["Brand"].dropna().unique())
-            brand_selected = st.multiselect(
-                "Brand",
-                options=brand_options,
-                default=[],
-                key="sav_brand",
-            )
-            if brand_selected:
-                sel = sel[sel["Brand"].isin(brand_selected)]
+            # 4) Brand checklist
+            if not sel.empty and brand_options:
+                brand_selected = multiselect_with_select_all(
+                    "Brand",
+                    options=brand_options,
+                    session_key_prefix="sav_brand",
+                )
+                if brand_selected:
+                    sel = sel[sel["Brand"].isin(brand_selected)]
+            
+            # 5) ABCXYZ checklist
+            abcxyz_options = sorted(sel["ABCXYZ"].dropna().unique())
+            if abcxyz_options:
+                abcxyz_selected = multiselect_with_select_all(
+                    "ABCXYZ",
+                    options=abcxyz_options,
+                    session_key_prefix="sav_abcxyz",
+                )
+                if abcxyz_selected:
+                    sel = sel[sel["ABCXYZ"].isin(abcxyz_selected)]
 
         # If filters eliminate everything, show zero metrics cleanly
         if sel.empty:
@@ -954,6 +1000,7 @@ with tab5:
             "SubCategory",
             "Brand",
             "Bucket",
+            "ABCXYZ",
             "Inventory_quantity",
             "UnitCost",
             "Inventory_value",
